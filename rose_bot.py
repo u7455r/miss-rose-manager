@@ -6,7 +6,7 @@ from telebot import types
 from keep_alive import keep_alive
 
 # আপনার দেওয়া নতুন এপিআই টোকেন
-BOT_TOKEN = "8968939053:AAFLrpnkLULu2h6B4k6J1rDBssvFtwXvZ28"
+BOT_TOKEN = "8968939053:AAEhZOysxMiwMHMqsOSd-AgdODnOCC4wVI0"
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # অটো-রিয়্যাকশন ইমোজি লিস্ট
