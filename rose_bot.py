@@ -3,35 +3,98 @@ import sys
 import random
 import re
 import time
+import sqlite3
 import telebot
 from telebot import types
 from keep_alive import keep_alive
 
-print("--- Starting Rafim Rose Manager Bot ---", flush=True)
+print("--- Starting Rafim Rose Manager Final Engine ---", flush=True)
 
 BOT_TOKEN = "8886219226:AAHAk9py2IIsXQZKF3X6CwyKWswQalJpZdM"
 bot = telebot.TeleBot(BOT_TOKEN, threaded=True)
 
-# চ্যানেল মেম্বারশিপ কনফিগারেশন
 REQ_CHANNEL = "@rafimhossen3"
 REQ_CHANNEL_LINK = "https://t.me/rafimhossen3"
 
-USER_WARNS = {}
-GROUP_FILTERS = {}
+DB_FILE = "rose_data.db"
+
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS warns (chat_id INTEGER, user_id INTEGER, count INTEGER, PRIMARY KEY (chat_id, user_id))''')
+    c.execute('''CREATE TABLE IF NOT EXISTS filters (chat_id INTEGER, keyword TEXT, reply TEXT, PRIMARY KEY (chat_id, keyword))''')
+    c.execute('''CREATE TABLE IF NOT EXISTS chats (chat_id INTEGER PRIMARY KEY)''')
+    conn.commit()
+    conn.close()
+
+init_db()
+
+def get_warn_count(chat_id, user_id):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT count FROM warns WHERE chat_id=? AND user_id=?", (chat_id, user_id))
+    row = c.fetchone()
+    conn.close()
+    return row[0] if row else 0
+
+def add_warn(chat_id, user_id):
+    curr = get_warn_count(chat_id, user_id) + 1
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("INSERT OR REPLACE INTO warns VALUES (?, ?, ?)", (chat_id, user_id, curr))
+    conn.commit()
+    conn.close()
+    return curr
+
+def reset_user_warns(chat_id, user_id):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("DELETE FROM warns WHERE chat_id=? AND user_id=?", (chat_id, user_id))
+    conn.commit()
+    conn.close()
+
+def save_filter(chat_id, keyword, reply):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("INSERT OR REPLACE INTO filters VALUES (?, ?, ?)", (chat_id, keyword.lower(), reply))
+    conn.commit()
+    conn.close()
+
+def get_filters(chat_id):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT keyword, reply FROM filters WHERE chat_id=?", (chat_id,))
+    rows = c.fetchall()
+    conn.close()
+    return dict(rows)
+
+def register_chat(chat_id):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("INSERT OR IGNORE INTO chats VALUES (?)", (chat_id,))
+    conn.commit()
+    conn.close()
+
+def get_all_chats():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT chat_id FROM chats")
+    rows = c.fetchall()
+    conn.close()
+    return [r[0] for r in rows]
 
 def is_subscribed(user_id):
     try:
         member = bot.get_chat_member(REQ_CHANNEL, user_id)
         return member.status in ['member', 'administrator', 'creator']
     except Exception as e:
-        print(f"Force-sub bypass (bot might not be admin in channel): {e}", flush=True)
-        # চ্যানেল সংক্রান্ত কারণে যাতে বট হ্যাং না হয়ে যায়
+        print(f"Force-sub bypass: {e}", flush=True)
         return True
 
 def get_join_markup():
     markup = types.InlineKeyboardMarkup(row_width=1)
     btn_chan = types.InlineKeyboardButton("📢 ১. অফিশিয়াল চ্যানেলে জয়েন করুন (@rafimhossen3)", url=REQ_CHANNEL_LINK)
-    btn_check = types.InlineKeyboardButton("✅ জয়েন করেছি (Verify)", callback_data="check_sub")
+    btn_check = types.InlineKeyboardButton("✅ জয়েন সম্পন্ন করেছি (Verify)", callback_data="check_sub")
     markup.add(btn_chan, btn_check)
     return markup
 
@@ -50,250 +113,302 @@ def get_reply_keyboard():
     markup.add(types.KeyboardButton("➕ গ্রুপে যুক্ত করুন"), types.KeyboardButton("📢 চ্যানেলে যুক্ত করুন"))
     return markup
 
-# প্রতিটি বাটনের ফুল ডিটেইলস ও কমান্ড টিউটোরিয়াল
 MODULE_DETAILS = {
     "admin": (
-        "🛡️ **Admin (অ্যাডমিন ম্যানেজমেন্ট):**\n\n"
-        "গ্রুপের প্রশাসক বা অ্যাডমিনদের সহজে পরিচালনা করার জন্য এই মডিউলটি ব্যবহার করা হয়।\n\n"
-        "**কমান্ডসমূহ:**\n"
+        "🛡️ **Admin Module (অ্যাডমিন ম্যানেজমেন্ট):**\n\n"
+        "গ্রুপের প্রশাসক ও অ্যাডমিনদের পরিচালনা করার মডিউল।\n\n"
+        "**প্রয়োজনীয় কমান্ডসমূহ:**\n"
         "• `/admins` - গ্রুপের বর্তমান অ্যাডমিন তালিকা দেখুন।\n"
-        "• `/promote` - কোনো মেম্বারকে অ্যাডমিন পদে উন্নীত করুন।\n"
-        "• `/demote` - কাউকে অ্যাডমিন পদ থেকে সাধারণ মেম্বারে নামান।\n"
-        "• `/admincache` - নতুন অ্যাডমিন যুক্ত হলে বটের ডাটা রিফ্রেশ করুন।"
+        "• `/promote` - কোনো মেম্বারকে অ্যাডমিন বানান।\n"
+        "• `/demote` - কাউকে অ্যাডমিন পদ থেকে সরান।\n"
+        "• `/admincache` - বটের মেমোরি রিফ্রেশ করুন।"
     ),
     "antiflood": (
-        "🌊 **Antiflood (স্প্যাম ফ্লাড প্রোটেকশন):**\n\n"
-        "একটানা দ্রুত মেসেজ পাঠিয়ে গ্রুপে বিশৃঙ্খলা সৃষ্টি করা প্রতিহত করতে এটি সক্রিয় থাকে।\n\n"
-        "**কমান্ডসমূহ:**\n"
-        "• `/flood` - বর্তমান ফ্লাড সেটিংস ও সীমা দেখুন।\n"
-        "• `/setflood <সংখ্যা>` - নির্দিষ্ট কতগুলো মেসেজ একনাগাড়ে দিলে সতর্ক বা মিউট হবে তা নির্ধারণ করুন (যেমন: `/setflood 5`)।\n"
-        "• `/setfloodmode <mute/ban>` - ফ্লাড সীমা ভাঙলে কী শাস্তি দেওয়া হবে তা সেট করুন।"
+        "🌊 **Antiflood (ফ্লাড প্রোটেকশন):**\n\n"
+        "একটানা দ্রুত মেসেজ পাঠিয়ে গ্রুপে স্প্যামিং বন্ধ করার সিস্টেম।\n\n"
+        "**প্রয়োজনীয় কমান্ডসমূহ:**\n"
+        "• `/flood` - বর্তমান সেটিংস দেখুন।\n"
+        "• `/setflood <সংখ্যা>` - কত মেসেজ পাঠালে মিউট হবে তা সেট করুন (যেমন: `/setflood 5`)।\n"
+        "• `/setfloodmode <mute/ban>` - ফ্লাডের শাস্তি নির্ধারণ করুন।"
     ),
     "antiraid": (
-        "⚔️ **AntiRaid (রেইড ও বট অ্যাটাক প্রোটেকশন):**\n\n"
-        "গ্রুপে হঠাৎ একসাথে শত শত ফেক আইডি বা স্প্যামার বটের অনুপ্রবেশ ঠেকাতে এটি কার্যকর।\n\n"
-        "**কমান্ডসমূহ:**\n"
-        "• `/antiraid <on/off>` - রেইড প্রোটেকশন চালু বা বন্ধ করুন।\n"
-        "• `/raidtime <সময়>` - কোনো আক্রমণ হলে গ্রুপ কত সময় লক থাকবে তা সেট করুন।"
+        "⚔️ **AntiRaid (রেইড অ্যাটাক প্রোটেকশন):**\n\n"
+        "হঠাৎ একসাথে শত শত ফেক মেম্বার বা স্প্যামার বট হামলা চালালে অটোমেটিক গ্রুপ লক করে দেওয়া।\n\n"
+        "**প্রয়োজনীয় কমান্ডসমূহ:**\n"
+        "• `/antiraid <on/off>` - রেইড প্রটেকশন অন বা অফ করুন।"
     ),
     "approval": (
         "🤝 **Approval (মেম্বার অ্যাপ্রুভাল):**\n\n"
-        "নির্দিষ্ট কিছু বিশ্বস্ত মেম্বারকে অনুমোদন দেওয়া, যাতে অ্যান্টি-স্প্যাম সিস্টেম তাদের মেসেজ বা লিঙ্ক ডিলিট না করে।\n\n"
-        "**কমান্ডসমূহ:**\n"
-        "• `/approve` - মেসেজে রিপ্লাই দিয়ে মেম্বারকে নিরাপদ হিসেবে অ্যাপ্রুভ করুন।\n"
-        "• `/unapprove` - মেম্বারের অনুমোদন বাতিল করুন।\n"
-        "• `/approved` - অনুমোদিত সব মেম্বারদের তালিকা দেখুন।"
+        "নির্দিষ্ট বিশ্বস্ত মেম্বারদের অনুমোদন দিন যাতে কোনো রেস্ট্রিকশন তাদের ওপর প্রযোজ্য না হয়।\n\n"
+        "**প্রয়োজনীয় কমান্ডসমূহ:**\n"
+        "• `/approve` - মেসেজে রিপ্লাই দিয়ে মেম্বারকে অ্যাপ্রুভ করুন।\n"
+        "• `/unapprove` - অনুমোদন তুলে নিন।\n"
+        "• `/approved` - অনুমোদিত মেম্বারদের তালিকা।"
     ),
     "bans": (
         "🚫 **Bans (ব্যান ও বহিষ্কার):**\n\n"
-        "স্প্যামার ও বিশৃঙ্খলা সৃষ্টিকারীদের গ্রুপ থেকে স্থায়ীভাবে বহিষ্কারের ব্যবস্থা।\n\n"
-        "**কমান্ডসমূহ:**\n"
-        "• `/ban` - মেম্বারকে গ্রুপ থেকে চিরতরে ব্যান করুন।\n"
-        "• `/tban <সময়>` - সাময়িক সময়ের জন্য ব্যান করুন (যেমন: `/tban 2d` ২ দিনের জন্য)।\n"
-        "• `/unban` - ব্যানের তালিকা থেকে কাউকে মুক্ত করুন।\n"
-        "• `/kick` - মেম্বারকে গ্রুপ থেকে বের করে দেওয়া (পরে আবার জয়েন করতে পারবে)।"
+        "গ্রুপের খারাপ সদস্যদের গ্রুপ থেকে বের করে দেওয়া।\n\n"
+        "**প্রয়োজনীয় কমান্ডসমূহ:**\n"
+        "• `/ban` - মেম্বারকে চিরতরে ব্যান করুন।\n"
+        "• `/tban <সময়>` - নির্দিষ্ট সময়ের জন্য ব্যান করুন (যেমন: `/tban 2d`)।\n"
+        "• `/unban` - ব্যান তুলে নিন।\n"
+        "• `/kick` - গ্রুপ থেকে সাময়িক বের করে দিন।"
     ),
     "blocklists": (
         "⛔ **Blocklists (নিষিদ্ধ শব্দ তালিকা):**\n\n"
-        "কোনো গালি, আপত্তিকর শব্দ বা নির্দিষ্ট নিষিদ্ধ টেক্সট স্বয়ংক্রিয়ভাবে মুছে দেওয়ার সুবিধা।\n\n"
-        "**কমান্ডসমূহ:**\n"
-        "• `/blocklist` - নিষিদ্ধ শব্দসমূহের তালিকা দেখুন।\n"
-        "• `/addblocklist <শব্দ>` - কোনো শব্দ নিষিদ্ধ করুন।\n"
+        "গ্রুপে নির্দিষ্ট কোনো গালি বা খারাপ টেক্সট স্বয়ংক্রিয়ভাবে মুছে ফেলার সুবিধা।\n\n"
+        "**প্রয়োজনীয় কমান্ডসমূহ:**\n"
+        "• `/blocklist` - নিষিদ্ধ শব্দসমূহের তালিকা।\n"
+        "• `/addblocklist <শব্দ>` - শব্দ নিষিদ্ধ করুন।\n"
         "• `/unblocklist <শব্দ>` - নিষিদ্ধ তালিকা থেকে শব্দ মুছুন।"
     ),
     "captcha": (
         "🤖 **CAPTCHA (হিউম্যান ভেরিফিকেশন):**\n\n"
-        "নতুন কোনো মেম্বার গ্রুপে যুক্ত হলে সে রোবট নাকি মানুষ তা ভেরিফাই করার জন্য ক্যাপচা বাটন দেখায়।\n\n"
-        "**কমান্ডসমূহ:**\n"
-        "• `/captcha <on/off>` - ক্যাপচা সিস্টেম চালু বা বন্ধ করুন।\n"
-        "• `/captchamode <button/math>` - বাটনে ক্লিক নাকি সাধারণ গণিত সমাধান করে ভেরিফাই করবে তা সেট করুন।"
+        "নতুন মেম্বার জয়েন করলে সে রোবট না মানুষ তা ভেরিফাই করার জন্য ক্যাপচা বাটন দেখায়। চাপ না দিলে মিউট থাকে।\n\n"
+        "**প্রয়োজনীয় কমান্ডসমূহ:**\n"
+        "• `/captcha <on/off>` - ক্যাপচা চালু বা বন্ধ করুন।"
     ),
     "cleancomma": (
         "🧹 **Clean Commands (কমান্ড ক্লিনার):**\n\n"
-        "মেম্বারদের দেওয়া `/` বা `!` দিয়ে শুরু হওয়া কমান্ড মেসেজগুলো কাজ শেষে চ্যাট থেকে স্বয়ংক্রিয়ভাবে মুছে চ্যাট ফ্রেশ রাখে।\n\n"
-        "**কমান্ডসমূহ:**\n"
-        "• `/cleancommand <on/off>` - কমান্ডের মেসেজ ক্লিন করা চালু বা বন্ধ করুন।"
+        "মেম্বারদের দেওয়া `/` বা `!` কমান্ডের মেসেজ স্বয়ংক্রিয়ভাবে মুছে চ্যাট ফ্রেশ রাখা।\n\n"
+        "**প্রয়োজনীয় কমান্ডসমূহ:**\n"
+        "• `/cleancommand <on/off>` - কমান্ড ডিলিট চালু/বন্ধ করুন।"
     ),
     "cleanservice": (
         "🧽 **Clean Service (সার্ভিস মেসেজ ক্লিনার):**\n\n"
-        "গ্রুপে 'অমুক জয়েন করেছে' বা 'অমুক গ্রুপ ত্যাগ করেছে' এই বিরক্তিকর মেসেজগুলো স্বয়ংক্রিয়ভাবে ডিলিট করে।\n\n"
-        "**কমান্ডসমূহ:**\n"
-        "• `/cleanservice <on/off>` - জয়েন/লিভ মেসেজ ডিলিট সিস্টেম চালু করুন।"
+        "গ্রুপে 'অমুক জয়েন করেছে' বা 'গ্রুপ ত্যাগ করেছে' এই বিরক্তিকর মেসেজগুলো স্বয়ংক্রিয়ভাবে ডিলিট করে।\n\n"
+        "**প্রয়োজনীয় কমান্ডসমূহ:**\n"
+        "• `/cleanservice <on/off>` - সার্ভিস মেসেজ ডিলিট চালু করুন।"
     ),
     "connections": (
-        "🔗 **Connections (রিমোট গ্রুপ কানেক্ট):**\n\n"
-        "বটের ইনবক্স (PM) থেকেই যেকোনো গ্রুপের সেটিংস দেখার ও পরিচালনা করার সিস্টেম।\n\n"
-        "**কমান্ডসমূহ:**\n"
-        "• `/connect <গ্রুপ আইডি>` - ইনবক্সের সাথে গ্রুপ লিংক করুন।\n"
+        "🔗 **Connections (রিমোট কানেক্ট):**\n\n"
+        "বটের ইনবক্স থেকেই যেকোনো গ্রুপ নিয়ন্ত্রণ করার সুবিধা।\n\n"
+        "**প্রয়োজনীয় কমান্ডসমূহ:**\n"
+        "• `/connect <গ্রুপ আইডি>` - ইনবক্সের সাথে গ্রুপ কানেক্ট করুন।\n"
         "• `/disconnect` - সংযোগ বিচ্ছিন্ন করুন।"
     ),
     "disabling": (
         "📴 **Disabling (কমান্ড নিয়ন্ত্রণ):**\n\n"
-        "গ্রুপের সাধারণ মেম্বারদের জন্য নির্দিষ্ট কিছু অপ্রয়োজনীয় কমান্ড নিষ্ক্রিয় করে রাখা।\n\n"
-        "**কমান্ডসমূহ:**\n"
-        "• `/disable <কমান্ডের নাম>` - নির্দিষ্ট কমান্ড বন্ধ করুন।\n"
-        "• `/enable <কমান্ডের নাম>` - বন্ধ থাকা কমান্ড আবার চালু করুন।"
+        "গ্রুপের সাধারণ মেম্বারদের জন্য নির্দিষ্ট কমান্ডগুলো নিষ্ক্রিয় করে রাখা।\n\n"
+        "**প্রয়োজনীয় কমান্ডসমূহ:**\n"
+        "• `/disable <কমান্ড>` - কমান্ড বন্ধ করুন।\n"
+        "• `/enable <কমান্ড>` - আবার চালু করুন।"
     ),
     "federations": (
         "🌐 **Federations (ফেডারেশন নেটওয়ার্ক):**\n\n"
-        "একাধিক গ্রুপকে এক ছাতার নিচে এনে একটি বিশ্বস্ত নেটওয়ার্ক তৈরি করা।\n\n"
-        "**কমান্ডসমূহ:**\n"
-        "• `/fban` - একজন স্প্যামারকে ফেডারেশনের অধীনে থাকা সকল গ্রুপ থেকে এক ক্লিকেই ব্যান করুন।\n"
-        "• `/unfban` - ফেডারেশন আনব্যান করুন।"
+        "অনেকগুলো গ্রুপ একসাথে যুক্ত করে এক ক্লিকে সব গ্রুপ থেকে ব্যান করার নেটওয়ার্ক।\n\n"
+        "**প্রয়োজনীয় কমান্ডসমূহ:**\n"
+        "• `/fban` - এক ক্লিকে ফেডারেশনের সব গ্রুপ থেকে ব্যান করুন।"
     ),
     "filters": (
-        "🎯 **Filters (কাস্টম অটো-রিপ্লাই):**\n\n"
-        "গ্রুপে মেম্বারদের নির্দিষ্ট প্রশ্নের জন্য বটের অটোমেটিক উত্তর সেট করার ফিচার।\n\n"
-        "**কমান্ডসমূহ:**\n"
+        "🎯 **Filters (অটো রিপ্লাই):**\n\n"
+        "নির্দিষ্ট শব্দ লিখলে বট থেকে স্বয়ংক্রিয় উত্তর পাওয়ার ব্যবস্থা।\n\n"
+        "**প্রয়োজনীয় কমান্ডসমূহ:**\n"
         "• `/addfilter <শব্দ> | <উত্তর>` - নতুন ফিল্টার যুক্ত করুন।\n"
-        "• `/filters` - আপনার গ্রুপের সমস্ত সক্রিয় ফিল্টারের তালিকা।\n"
-        "• `/stop <শব্দ>` - কোনো ফিল্টার মুছে ফেলুন।"
+        "• `/filters` - সক্রিয় ফিল্টারের তালিকা।\n"
+        "• `/stop <শব্দ>` - ফিল্টার মুছে দিন।"
     ),
     "formatting": (
-        "✍️ **Formatting (টেক্সট ফরম্যাটিং স্টাইল):**\n\n"
-        "বটের মাধ্যমে বোল্ড, ইটালিক, কোড ব্লক ও হাইপারলিংক দিয়ে মেসেজ সুন্দর করার নিয়ম:\n\n"
-        "• `*বোল্ড টেক্সট*` -> মোটা লেখা।\n"
-        "• `_ইটালিক টেক্সট_` -> বাঁকা লেখা।\n"
-        "• `[টেক্সট](লিংক)` -> লেখার ভেতরে গোপন লিংক বসানো।"
+        "✍️ **Formatting (টেক্সট স্টাইল):**\n\n"
+        "মেসেজ সুন্দর করে সাজানোর নিয়ম:\n\n"
+        "• `*বোল্ড*` - লেখা মোটা হবে।\n"
+        "• `_ইটালিক_` - লেখা বাঁকা হবে।\n"
+        "• `[লেখা](লিঙ্ক)` - লেখার ভেতর লিঙ্ক।"
     ),
     "greetings": (
-        "👋 **Greetings (স্বাগতম ও বিদায় বার্তা):**\n\n"
-        "নতুন সদস্য প্রবেশ করলে সুন্দর কাস্টম ওয়েলকাম মেসেজ পাঠানোর সিস্টেম।\n\n"
-        "**কমান্ডসমূহ:**\n"
-        "• `/welcome <on/off>` - ওয়েলকাম মেসেজ চালু বা বন্ধ করুন।\n"
-        "• `/setwelcome <বার্তা>` - আপনার গ্রুপের জন্য কাস্টম স্বাগতম বার্তা সেট করুন।"
+        "👋 **Greetings (স্বাগতম বার্তা):**\n\n"
+        "নতুন সদস্য প্রবেশ করলে সুন্দর স্বাগতম বার্তা জানানো।\n\n"
+        "**প্রয়োজনীয় কমান্ডসমূহ:**\n"
+        "• `/welcome <on/off>` - ওয়েলকাম মেসেজ চালু/বন্ধ।\n"
+        "• `/setwelcome <বার্তা>` - কাস্টম ওয়েলকাম সেট করুন।"
     ),
     "importexport": (
-        "📦 **Import/Export (গ্রুপ ব্যাকআপ ও রিস্টোর):**\n\n"
-        "আপনার গ্রুপের সব সেটিংস, ফিল্টার, রুলস ফাইল হিসেবে ডাউনলোড করা বা নতুন গ্রুপে আপলোড করা।\n\n"
-        "**কমান্ডসমূহ:**\n"
-        "• `/export` - গ্রুপের সব ডেটা ডাউনলোড করে ফাইল নিন।\n"
-        "• `/import` - সেভ করা ব্যাকআপ ফাইল আপলোড করে গ্রুপ রিস্টোর করুন।"
+        "📦 **Import/Export (ব্যাকআপ ও রিস্টোর):**\n\n"
+        "গ্রুপের সকল ফিল্টার ও সেটিংস ব্যাকআপ ফাইল হিসেবে সেভ করা বা আপলোড করা।\n\n"
+        "**প্রয়োজনীয় কমান্ডসমূহ:**\n"
+        "• `/export` - ব্যাকআপ ফাইল ডাউনলোড করুন।\n"
+        "• `/import` - ফাইল দিয়ে রিস্টোর করুন।"
     ),
     "languages": (
-        "🌍 **Languages (ভাষা নির্বাচন):**\n\n"
-        "বটের ইন্টারফেস ও রিপ্লাই মেসেজের ভাষা পরিবর্তনের অপশন।\n\n"
-        "**কমান্ডসমূহ:**\n"
-        "• `/setlang` - আপনার পছন্দের ভাষা (যেমন: বাংলা, ইংরেজি) বেছে নিন।"
+        "🌍 **Languages (ভাষা পরিবর্তন):**\n\n"
+        "বটের ভাষা পরিবর্তন করার কমান্ড।\n\n"
+        "• `/setlang` - ভাষা নির্বাচন করুন।"
     ),
     "locks": (
-        "🔒 **Locks (নির্দিষ্ট কনটেন্ট লক):**\n\n"
-        "গ্রুপে লিঙ্ক, ফটো, ভিডিও, ভয়েস, স্টিকার বা ফরওয়ার্ড মেসেজ পাঠানো বন্ধ রাখা।\n\n"
-        "**কমান্ডসমূহ:**\n"
-        "• `/lock links` - গ্রুপে সব ধরণের লিঙ্ক শেয়ার বন্ধ করুন।\n"
+        "🔒 **Locks (কনটেন্ট লক):**\n\n"
+        "গ্রুপে লিঙ্ক, ফটো, ভিডিও, স্টিকার ইত্যাদি পাঠানো বন্ধ রাখা।\n\n"
+        "**প্রয়োজনীয় কমান্ডসমূহ:**\n"
+        "• `/lock links` - গ্রুপের লিঙ্ক শেয়ার বন্ধ করুন।\n"
         "• `/lock photo` - ফটো পাঠানো বন্ধ করুন।\n"
-        "• `/unlock <নাম>` - লক করা অপশন আবার চালু করুন।"
+        "• `/unlock <নাম>` - আনলক করুন।"
     ),
     "logchannels": (
-        "📝 **Log Channels (লগ চ্যানেল মনিটরিং):**\n\n"
-        "গ্রুপে কোন মেম্বার ব্যান হলো, কার মেসেজ ডিলিট হলো তা নজরদারির জন্য আলাদা প্রাইভেট চ্যানেলে সেভ রাখা।\n\n"
-        "**কমান্ডসমূহ:**\n"
-        "• `/logchannel` - বর্তমান লগ চ্যানেল চেক করুন।\n"
-        "• `/setlog` - গ্রুপ অ্যাকশনের লগ পাঠানোর জন্য চ্যানেল সেট করুন।"
+        "📝 **Log Channels (লগ চ্যানেল):**\n\n"
+        "গ্রুপে কে কাকে ব্যান করল বা কি ডিলিট হলো তা আলাদা চ্যানেলে রেকর্ড রাখা।\n\n"
+        "**প্রয়োজনীয় কমান্ডসমূহ:**\n"
+        "• `/setlog` - লগ চ্যানেল সেট করুন।"
     ),
     "misc": (
-        "⚙️ **Misc (বিবিধ দরকারি টুলস):**\n\n"
-        "গ্রুপ ও মেম্বারদের সাধারণ প্রয়োজনীয় তথ্য জানার ফিচার।\n\n"
-        "**কমান্ডসমূহ:**\n"
-        "• `/id` - আপনার নিজের এবং গ্রুপের টেলিগ্রাম ইউনিক আইডি জানুন।\n"
-        "• `/info` - কোনো ইউজারের বিস্তারিত বায়ো ও প্রোফাইল ডাটা দেখুন।"
+        "⚙️ **Misc (বিবিধ টুলস):**\n\n"
+        "প্রয়োজনীয় সাধারণ টুলস।\n\n"
+        "**প্রয়োজনীয় কমান্ডসমূহ:**\n"
+        "• `/id` - আপনার টেলিগ্রাম আইডি দেখুন।\n"
+        "• `/info` - ইউজারের প্রোফাইল ডাটা দেখুন।"
     ),
     "notes": (
-        "📌 **Notes (প্রয়োজনীয় নোট সেভ):**\n\n"
-        "গ্রুপের গুরুত্বপূর্ণ কোনো নোটিশ বা লিঙ্ক সেভ করে রাখা, যা `#নাম` লিখলেই সাথে সাথে পাওয়া যায়।\n\n"
-        "**কমান্ডসমূহ:**\n"
-        "• `/save <নোটের_নাম> <মেসেজ>` - নতুন নোট সেভ করুন।\n"
-        "• `/get <নোটের_নাম>` - সেভ করা নোট দেখুন।\n"
-        "• `/notes` - সব সেভ করা নোটের লিস্ট।"
+        "📌 **Notes (নোট সেভ):**\n\n"
+        "জরুরি কোনো তথ্য সেভ করে রাখা যা হ্যাশট্যাগ দিয়ে মেম্বাররা দেখতে পাবে।\n\n"
+        "**প্রয়োজনীয় কমান্ডসমূহ:**\n"
+        "• `/save <নাম> <মেসেজ>` - নোট সেভ করুন।\n"
+        "• `/notes` - সব সেভ করা নোট।"
     ),
     "pin": (
-        "📍 **Pin (মেসেজ পিন সিস্টেম):**\n\n"
-        "গ্রুপের জরুরি কোনো নোটিশ বা পোস্ট সবার উপরে ঝুলিয়ে রাখার সুবিধা।\n\n"
-        "**কমান্ডসমূহ:**\n"
-        "• `/pin` - যে মেসেজটি পিন করতে চান সেখানে রিপ্লাই দিয়ে এই কমান্ড দিন।\n"
-        "• `/unpin` - বর্তমান পিন করা মেসেজ আনপিন করুন।\n"
-        "• `/pinned` - বর্তমানে কোন মেসেজ পিন করা আছে তা সরাসরি দেখুন।"
+        "📍 **Pin (মেসেজ পিন):**\n\n"
+        "গুরুত্বপূর্ণ মেসেজ গ্রুপের শীর্ষে পিন করা।\n\n"
+        "**প্রয়োজনীয় কমান্ডসমূহ:**\n"
+        "• `/pin` - মেসেজে রিপ্লাই দিয়ে পিন করুন।\n"
+        "• `/unpin` - আনপিন করুন।"
     ),
     "privacy": (
-        "🔐 **Privacy (ইউজার প্রাইভেসি ও নিরাপত্তা):**\n\n"
-        "গ্রুপ মেম্বারদের ব্যক্তিগত গোপনীয়তা রক্ষা এবং টেলিগ্রাম সিকিউরিটি স্ট্যান্ডার্ড নিশ্চিত করার মডিউল।"
+        "🔐 **Privacy (নিরাপত্তা):**\n\n"
+        "গ্রুপ মেম্বারদের গোপনীয়তা রক্ষা ও নিরাপত্তা সংক্রান্ত মডিউল।"
     ),
     "purges": (
         "🗑️ **Purges (ম্যাসিভ মেসেজ ডিলিট):**\n\n"
-        "চ্যাট ক্লিয়ার করতে একসাথে শত শত অপ্রয়োজনীয় বা স্প্যাম মেসেজ চোখের পলকে মুছে ফেলার সিস্টেম।\n\n"
-        "**কমান্ডসমূহ:**\n"
-        "• `/purge` - যে মেসেজ থেকে শুরু করে শেষ পর্যন্ত মুছতে চান, সেখানে রিপ্লাই করে কমান্ড দিন।"
+        "এক ক্লিকে অনেক মেসেজ ডিলিট করার ব্যবস্থা।\n\n"
+        "**প্রয়োজনীয় কমান্ডসমূহ:**\n"
+        "• `/purge` - যেখান থেকে মুছবেন সেখানে রিপ্লাই করে কমান্ড দিন।"
     ),
     "reports": (
-        "📢 **Reports (মেম্বার রিপোর্ট সিস্টেম):**\n\n"
-        "গ্রুপে কোনো সমস্যা হলে সদস্যরা খুব সহজেই সব অ্যাডমিনদের ডেকে দৃষ্টি আকর্ষণ করতে পারে।\n\n"
-        "**কমান্ডসমূহ:**\n"
-        "• মেম্বাররা কোনো বাজে মেসেজে রিপ্লাই করে `@admin` অথবা `/report` লিখলেই গ্রুপের সকল অ্যাডমিনের কাছে নোটিফিকেশন পৌঁছে যাবে।"
+        "📢 **Reports (মেম্বার রিপোর্ট):**\n\n"
+        "গ্রুপে সমস্যা হলে এডমিনদের ডাকা।\n\n"
+        "• মেসেজে রিপ্লাই দিয়ে `@admin` বা `/report` লিখলে সব অ্যাডমিনের কাছে অ্যালার্ট যাবে।"
     ),
     "rules": (
-        "📜 **Rules (গ্রুপের কানুন ও নীতিমালা):**\n\n"
-        "গ্রুপের নির্দিষ্ট নিয়মাবলী সেট করা, যাতে মেম্বাররা সহজেই এক ক্লিকে গ্রুপের নিয়ম দেখতে পারে।\n\n"
-        "**কমান্ডসমূহ:**\n"
-        "• `/rules` - গ্রুপের অফিসিয়াল নিয়মাবলী পড়ুন।\n"
-        "• `/setrules <নিয়মগুলো>` - নতুন নিয়মাবলী সেট বা এডিট করুন।"
+        "📜 **Rules (গ্রুপের কানুন):**\n\n"
+        "গ্রুপের নিয়মাবলী সেট ও পড়ার সিস্টেম।\n\n"
+        "**প্রয়োজনীয় কমান্ডসমূহ:**\n"
+        "• `/rules` - নিয়ম দেখুন।\n"
+        "• `/setrules <নিয়ম>` - নিয়ম সেট করুন।"
     ),
     "topics": (
-        "💬 **Topics (টপিকস ও ফোরাম ম্যানেজমেন্ট):**\n\n"
-        "টেলিগ্রামের ফোরাম বা সাব-টপিক গ্রুপগুলো সুশৃঙ্খলভাবে পরিচালনার মডিউল।\n\n"
-        "**কমান্ডসমূহ:**\n"
-        "• নির্দিষ্ট সাব-টপিক বন্ধ, খোলা বা নির্দিষ্ট টপিকের ভেতরে মেসেজ ফিল্টারিং করা।"
+        "💬 **Topics (টপিকস ও ফোরাম):**\n\n"
+        "টেলিগ্রাম ফোরাম গ্রুপের সাব-টপিক ম্যানেজমেন্ট।"
     ),
     "warnings": (
-        "⚠️ **Warnings (সতর্কবার্তা সিস্টেম):**\n\n"
-        "নিয়ম না মানা সদস্যদের ওয়ার্নিং দেওয়া। ৩টি ওয়ার্ন পূর্ণ হলে মেম্বার অটো মিউট বা ব্যান হয়ে যাবে।\n\n"
-        "**কমান্ডসমূহ:**\n"
-        "• `/warn` - মেম্বারের মেসেজে রিপ্লাই করে সতর্কবার্তা দিন।\n"
-        "• `/warns` - কোনো মেম্বার কয়টি ওয়ার্ন পেয়েছে তা দেখুন।\n"
-        "• `/resetwarn` - ইউজারের সব ওয়ার্ন মাফ করে দিন।"
+        "⚠️ **Warnings (ওয়ার্নিং সিস্টেম):**\n\n"
+        "নিয়ম না মানলে সতর্কবার্তা দেওয়া। ৩টি পূর্ণ হলে অটো মিউট/ব্যান।\n\n"
+        "**প্রয়োজনীয় কমান্ডসমূহ:**\n"
+        "• `/warn` - মেম্বারের মেসেজে রিপ্লাই দিয়ে ওয়ার্ন দিন।\n"
+        "• `/warns` - কত ওয়ার্ন পেয়েছে দেখুন।"
     ),
     "custominstances": (
-        "⭐ **Custom Instances (পার্সোনাল ব্র্যান্ড বট):**\n\n"
-        "নিজের গ্রুপ বা চ্যানেলের জন্য সম্পূর্ণ নিজস্ব নামে, প্রোফাইল ফটোতে ও লোগোতে একই সুবিধার পার্সোনাল বট তৈরি করা।\n\n"
-        "• বিস্তারিত জানতে অ্যাডমিনের সাথে যোগাযোগ করুন: @rafimhossen"
+        "⭐ **Custom Instances:**\n\n"
+        "সম্পূর্ণ নিজস্ব ব্র্যান্ডে এবং প্রোফাইল ছবিতে ক্লোন বট বানানোর সুবিধা।\n\n"
+        "• যোগাযোগের ঠিকানা: @rafimhossen"
     )
 }
 
 MODULE_LIST = [
-    ("Admin", "admin"), ("Antiflood", "antiflood"), ("AntiRaid", "antiraid"),
-    ("Approval", "approval"), ("Bans", "bans"), ("Blocklists", "blocklists"),
-    ("CAPTCHA", "captcha"), ("Clean Comma", "cleancomma"), ("Clean Service", "cleanservice"),
-    ("Connections", "connections"), ("Disabling", "disabling"), ("Federations", "federations"),
-    ("Filters", "filters"), ("Formatting", "formatting"), ("Greetings", "greetings"),
-    ("Import/Export", "importexport"), ("Languages", "languages"), ("Locks", "locks"),
-    ("Log Channels", "logchannels"), ("Misc", "misc"), ("Notes", "notes"),
-    ("Pin", "pin"), ("Privacy", "privacy"), ("Purges", "purges"),
-    ("Reports", "reports"), ("Rules", "rules"), ("Topics", "topics")
+    ("🛡️ Admin", "admin"), ("🌊 Antiflood", "antiflood"), ("⚔️ AntiRaid", "antiraid"),
+    ("🤝 Approval", "approval"), ("🚫 Bans", "bans"), ("⛔ Blocklists", "blocklists"),
+    ("🤖 CAPTCHA", "captcha"), ("🧹 Clean Comma", "cleancomma"), ("🧽 Clean Service", "cleanservice"),
+    ("🔗 Connect", "connections"), ("📴 Disabling", "disabling"), ("🌐 Federation", "federations"),
+    ("🎯 Filters", "filters"), ("✍️ Formatting", "formatting"), ("👋 Greetings", "greetings"),
+    ("📦 Backup", "importexport"), ("🌍 Language", "languages"), ("🔒 Locks", "locks"),
+    ("📝 Logs", "logchannels"), ("⚙️ Misc", "misc"), ("📌 Notes", "notes"),
+    ("📍 Pin", "pin"), ("🔐 Privacy", "privacy"), ("🗑️ Purges", "purges"),
+    ("📢 Reports", "reports"), ("📜 Rules", "rules"), ("💬 Topics", "topics")
 ]
 
 def get_rose_help_menu():
     markup = types.InlineKeyboardMarkup(row_width=3)
-    btns = [types.InlineKeyboardButton(name, callback_data=f"info_{key}") for name, key in MODULE_LIST]
+    btns = [types.InlineKeyboardButton(name, callback_data=f"helpmod_{key}") for name, key in MODULE_LIST]
     markup.add(*btns)
     markup.row(
-        types.InlineKeyboardButton("Warnings", callback_data="info_warnings"),
-        types.InlineKeyboardButton("⭐ Custom Instances", callback_data="info_custominstances")
+        types.InlineKeyboardButton("⚠️ Warnings", callback_data="helpmod_warnings"),
+        types.InlineKeyboardButton("⭐ Custom Instances", callback_data="helpmod_custominstances")
     )
-    markup.row(types.InlineKeyboardButton("👨‍💻 Connect Admin (@rafimhossen)", url="https://t.me/rafimhossen"))
+    markup.row(types.InlineKeyboardButton("👨‍💻 Developer Support (@rafimhossen)", url="https://t.me/rafimhossen"))
     return markup
+
+@bot.message_handler(content_types=['new_chat_members'])
+def handle_new_member(message):
+    register_chat(message.chat.id)
+    for member in message.new_chat_members:
+        if member.id == bot.get_me().id:
+            continue
+        try:
+            bot.restrict_chat_member(message.chat.id, member.id, permissions=types.ChatPermissions(can_send_messages=False))
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("✅ আমি নিয়ম মেনে চলব (Verify)", callback_data=f"verify_rule_{member.id}"))
+            bot.send_message(
+                message.chat.id,
+                f"👋 স্বাগতম [{member.first_name}](tg://user?id={member.id})!\n\n"
+                f"🛡️ **গ্রুপে কথা বলতে নিচের বাটনে চাপ দিয়ে নিয়ম স্বীকার করুন:**",
+                reply_markup=markup,
+                parse_mode='Markdown'
+            )
+        except Exception as e:
+            print(f"Mute error: {e}")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("verify_rule_"))
+def handle_verify_rules(call):
+    target_id = int(call.data.split("_")[2])
+    if call.from_user.id != target_id:
+        bot.answer_callback_query(call.id, "❌ এই বাটনটি নতুন মেম্বারের জন্য!", show_alert=True)
+        return
+    try:
+        bot.restrict_chat_member(
+            call.message.chat.id,
+            target_id,
+            permissions=types.ChatPermissions(
+                can_send_messages=True,
+                can_send_media_messages=True,
+                can_send_other_messages=True,
+                can_add_web_page_previews=True
+            )
+        )
+        bot.answer_callback_query(call.id, "✅ ভেরিফিকেশন সফল হয়েছে!", show_alert=True)
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+    except Exception:
+        pass
+
+@bot.message_handler(commands=['broadcast'])
+def handle_broadcast(message):
+    if message.from_user.username != "rafimhossen":
+        bot.reply_to(message, "❌ এটি কেবল বটের ওনারের জন্য সংরক্ষিত!")
+        return
+    text = message.text.replace('/broadcast', '').strip()
+    if not text:
+        bot.reply_to(message, "⚠️ ব্যবহার: `/broadcast আপনার মেসেজ`", parse_mode='Markdown')
+        return
+
+    chats = get_all_chats()
+    sent_count = 0
+    bot.reply_to(message, f"📢 মোট {len(chats)} টি গ্রুপে ব্রডকাস্ট শুরু হচ্ছে...")
+    for cid in chats:
+        try:
+            bot.send_message(cid, f"📢 **অফিসিয়াল অ্যানাউন্সমেন্ট:**\n\n{text}", parse_mode='Markdown')
+            sent_count += 1
+            time.sleep(0.05)
+        except Exception:
+            pass
+    bot.send_message(message.chat.id, f"✅ সফলভাবে {sent_count} টি গ্রুপে পাঠানো হয়েছে।")
 
 @bot.callback_query_handler(func=lambda call: call.data == "check_sub")
 def verify_subscription(call):
     if is_subscribed(call.from_user.id):
-        bot.answer_callback_query(call.id, "✅ ধন্যবাদ! আপনার ভেরিফিকেশন সফল হয়েছে।", show_alert=True)
+        bot.answer_callback_query(call.id, "✅ আপনার ভেরিফিকেশন সফল হয়েছে।", show_alert=True)
         try:
             bot.delete_message(call.message.chat.id, call.message.message_id)
         except Exception:
             pass
         send_welcome(call.message, call.from_user)
     else:
-        bot.answer_callback_query(call.id, "❌ আপনি এখনো @rafimhossen3 চ্যানেলে জয়েন করেননি! দয়া করে আগে জয়েন করুন।", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ আপনি এখনো @rafimhossen3 চ্যানেলে জয়েন করেননি!", show_alert=True)
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("info_") or call.data == "back_to_menu")
+@bot.callback_query_handler(func=lambda call: call.data.startswith(("helpmod_", "mod_", "info_")) or call.data in ["back_to_menu", "back_menu"])
 def handle_module_details_callback(call):
     if not is_subscribed(call.from_user.id):
         bot.answer_callback_query(call.id, "⚠️ আগে আমাদের চ্যানেলে জয়েন থাকতে হবে!", show_alert=True)
@@ -305,23 +420,22 @@ def handle_module_details_callback(call):
         )
         return
 
-    if call.data == "back_to_menu":
+    if call.data in ["back_to_menu", "back_menu"]:
         bot.edit_message_text(
-            "নিচের মডিউলগুলোতে চাপ দিয়ে বিস্তারিত জানুন:\n\nAll commands can be used with the following: `/` `!`",
+            "⚡ **মডিউল ড্যাশবোর্ড:**\nনিচের যেকোনো মডিউলে ক্লিক করে সেটির কাজ এবং প্রয়োজনীয় কমান্ডগুলো দেখে নিন:\n\nAll commands can be used with: `/` `!`",
             call.message.chat.id,
             call.message.message_id,
             reply_markup=get_rose_help_menu()
         )
     else:
-        key = call.data.replace("info_", "")
-        detail_msg = MODULE_DETAILS.get(key, "📌 এই মডিউলটি সক্রিয় রয়েছে।")
+        key = call.data.replace("helpmod_", "").replace("mod_", "").replace("info_", "").strip().lower()
+        detail_msg = MODULE_DETAILS.get(key, f"📌 **{key.capitalize()} Module:** এই ফিচারটির মডারেশন ও ফাংশন গ্রুপে সক্রিয় রয়েছে।")
         
         nav_markup = types.InlineKeyboardMarkup()
         nav_markup.row(
             types.InlineKeyboardButton("🔙 Back to Menu", callback_data="back_to_menu"),
             types.InlineKeyboardButton("👨‍💻 Support Admin", url="https://t.me/rafimhossen")
         )
-        
         bot.edit_message_text(
             detail_msg,
             call.message.chat.id,
@@ -340,13 +454,14 @@ def send_welcome(message, user=None):
     bot.send_message(message.chat.id, text, reply_markup=get_reply_keyboard(), parse_mode='Markdown')
     bot.send_message(
         message.chat.id, 
-        "নিচের মডিউলগুলোতে চাপ দিয়ে বিস্তারিত জানুন:\n\nAll commands can be used with the following: `/` `!`", 
+        "⚡ **মডিউল ড্যাশবোর্ড:**\nনিচের যেকোনো মডিউলে ক্লিক করে সেটির কাজ এবং প্রয়োজনীয় কমান্ডগুলো দেখে নিন:\n\nAll commands can be used with: `/` `!`", 
         reply_markup=get_rose_help_menu()
     )
 
 @bot.message_handler(commands=['start', 'help'])
 def handle_start(message):
     try:
+        register_chat(message.chat.id)
         if message.chat.type == 'private':
             if not is_subscribed(message.from_user.id):
                 bot.send_message(
@@ -367,6 +482,7 @@ def handle_start(message):
 ])
 def reply_buttons_handler(message):
     try:
+        register_chat(message.chat.id)
         if message.chat.type == 'private' and not is_subscribed(message.from_user.id):
             bot.send_message(message.chat.id, "⚠️ অনুগ্রহ করে আগে আমাদের চ্যানেলে জয়েন করুন!", reply_markup=get_join_markup())
             return
@@ -404,7 +520,7 @@ def reply_buttons_handler(message):
 def handle_admin_commands(message):
     if message.chat.type == 'private':
         return
-    
+    register_chat(message.chat.id)
     is_anon = message.sender_chat and message.sender_chat.id == message.chat.id
     is_user_admin = is_anon or (message.from_user and is_group_admin(message.chat.id, message.from_user.id))
 
@@ -447,15 +563,13 @@ def verify_and_execute_admin(call):
         elif cmd == 'warn':
             if orig_msg and orig_msg.from_user:
                 target = orig_msg.from_user
-                key = f"{chat_id}_{target.id}"
-                USER_WARNS[key] = USER_WARNS.get(key, 0) + 1
-                curr = USER_WARNS[key]
+                curr = add_warn(chat_id, target.id)
                 if curr >= 3:
                     bot.restrict_chat_member(chat_id, target.id, permissions=types.ChatPermissions(can_send_messages=False))
                     bot.edit_message_text(f"🚫 [{target.first_name}](tg://user?id={target.id}) ৩ বার সতর্ক পেয়ে মিউট হয়েছেন!", chat_id, call.message.message_id, parse_mode='Markdown')
-                    USER_WARNS[key] = 0
+                    reset_user_warns(chat_id, target.id)
                 else:
-                    bot.edit_message_text(f"⚠️ [{target.first_name}](tg://user?id={target.id}) সতর্কবার্তা: **{curr}/3**", chat_id, call.message.message_id, parse_mode='Markdown')
+                    bot.edit_message_text(f"⚠️ [{target.first_name}](tg://user?id={target.id}) সতর্কবার্তা: **{curr}/3** (ডাটাবেজে সংরক্ষিত)", chat_id, call.message.message_id, parse_mode='Markdown')
             else:
                 bot.edit_message_text("⚠️ সতর্ক করতে ইউজারের মেসেজে রিপ্লাই দিন।", chat_id, call.message.message_id)
 
@@ -482,12 +596,12 @@ def verify_and_execute_admin(call):
         bot.answer_callback_query(call.id, f"ত্রুটি: {e}", show_alert=True)
 
 @bot.message_handler(commands=['addfilter'])
-def add_filter(message):
+def add_filter_cmd(message):
     if message.chat.type == 'private' or not is_group_admin(message.chat.id, message.from_user.id):
         return
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
-        bot.reply_to(message, "⚠️ নিয়ম: `/addfilter শব্দ | উত্তর`", parse_mode='Markdown')
+        bot.reply_to(message, "⚠️ সঠিক ফরম্যাট: `/addfilter শব্দ | উত্তর`", parse_mode='Markdown')
         return
     content = parts[1].split('|')
     if len(content) < 2:
@@ -495,18 +609,16 @@ def add_filter(message):
         return
     kw = content[0].strip().lower()
     ans = content[1].strip()
-    if message.chat.id not in GROUP_FILTERS:
-        GROUP_FILTERS[message.chat.id] = {}
-    GROUP_FILTERS[message.chat.id][kw] = ans
-    bot.reply_to(message, f"🎯 ফিল্টার সেট হয়েছে: `{kw}`", parse_mode='Markdown')
+    save_filter(message.chat.id, kw, ans)
+    bot.reply_to(message, f"🎯 ফিল্টার সেভ হয়েছে: `{kw}`", parse_mode='Markdown')
 
 @bot.message_handler(commands=['filters'])
 def list_filters(message):
     if message.chat.type == 'private':
         return
-    filters = GROUP_FILTERS.get(message.chat.id, {})
+    filters = get_filters(message.chat.id)
     if not filters:
-        bot.reply_to(message, "📂 এই গ্রুপে কোনো কাস্টম ফিল্টার সেট নেই।")
+        bot.reply_to(message, "📂 এই গ্রুপে কোনো কাস্টম ফিল্টার নেই।")
         return
     txt = "📋 **গ্রুপের ফিল্টার তালিকা:**\n\n"
     for kw in filters.keys():
@@ -515,15 +627,15 @@ def list_filters(message):
 
 @bot.message_handler(commands=['rules'])
 def send_rules(message):
-    bot.reply_to(message, "📜 **গ্রুপের নিয়মাবলী:**\n\n১. গ্রুপে লিঙ্ক শেয়ার বা স্প্যামিং করা নিষেধ।\n২. কাউকে অসম্মান করা যাবে না।")
+    bot.reply_to(message, "📜 **গ্রুপের নিয়মাবলী:**\n\n১. গ্রুপে লিঙ্ক শেয়ার বা স্প্যামিং সম্পূর্ণ নিষেধ।\n২. গ্রুপের পরিচ্ছন্নতা বজায় রাখুন।")
 
 @bot.message_handler(func=lambda msg: msg.chat.type in ['group', 'supergroup'])
 def group_filters_and_links(message):
     if not message.text:
         return
+    register_chat(message.chat.id)
     is_admin = is_group_admin(message.chat.id, message.from_user.id) if message.from_user else False
     
-    # অটো লিঙ্ক ব্লকার
     if re.search(r'(https?://[^\s]+|t\.me/[^\s]+|telegram\.me/[^\s]+)', message.text):
         if not is_admin:
             try:
@@ -533,8 +645,7 @@ def group_filters_and_links(message):
                 pass
             return
 
-    # কাস্টম ফিল্টার চেক
-    chat_filters = GROUP_FILTERS.get(message.chat.id, {})
+    chat_filters = get_filters(message.chat.id)
     text_lower = message.text.lower()
     for kw, resp in chat_filters.items():
         if kw in text_lower:
