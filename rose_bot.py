@@ -9,7 +9,7 @@ from keep_alive import keep_alive
 
 print("--- Initializing Rafim Rose Manager Ultimate Engine ---", flush=True)
 
-BOT_TOKEN = "8886219226:AAHfmiFsb-EOyz8XzHTlV8npGh3giKcNHLI"
+BOT_TOKEN = "8886219226:AAHfmiF"
 bot = telebot.TeleBot(BOT_TOKEN, threaded=True)
 
 REQ_CHANNEL = "@rafimhossen3"
