@@ -1,94 +1,149 @@
 import os
 import sys
-import random
-import re
 import time
+import re
 import sqlite3
 import telebot
 from telebot import types
 from keep_alive import keep_alive
 
-print("--- Starting Rafim Rose Manager Final Engine ---", flush=True)
+print("--- Initializing Rafim Rose Manager Ultimate Engine ---", flush=True)
 
-BOT_TOKEN = "8886219226:AAEUEn_MoHl8XLmJaAabL51_w5m_3y0DsSc"
+BOT_TOKEN = "8886219226:AAEFZjj_SJ6fduS6toHzZBrxxtwJhi9rKYc"
 bot = telebot.TeleBot(BOT_TOKEN, threaded=True)
 
 REQ_CHANNEL = "@rafimhossen3"
 REQ_CHANNEL_LINK = "https://t.me/rafimhossen3"
+DB_FILE = "rose_ultimate.db"
 
-DB_FILE = "rose_data.db"
+# Admin Tracking
+ADMIN_USERNAME = "rafimhossen"
+ADMIN_ID = None
 
+# ==================== DATABASE INITIALIZATION ====================
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS warns (chat_id INTEGER, user_id INTEGER, count INTEGER, PRIMARY KEY (chat_id, user_id))''')
     c.execute('''CREATE TABLE IF NOT EXISTS filters (chat_id INTEGER, keyword TEXT, reply TEXT, PRIMARY KEY (chat_id, keyword))''')
     c.execute('''CREATE TABLE IF NOT EXISTS chats (chat_id INTEGER PRIMARY KEY)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, val INTEGER)''')
     conn.commit()
     conn.close()
 
 init_db()
 
+def get_admin_id():
+    global ADMIN_ID
+    if ADMIN_ID:
+        return ADMIN_ID
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("SELECT val FROM config WHERE key='admin_id'")
+        row = c.fetchone()
+        conn.close()
+        if row:
+            ADMIN_ID = row[0]
+            return ADMIN_ID
+    except Exception:
+        pass
+    return None
+
+def set_admin_id(uid):
+    global ADMIN_ID
+    ADMIN_ID = uid
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO config VALUES ('admin_id', ?)", (uid,))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
 def get_warn_count(chat_id, user_id):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("SELECT count FROM warns WHERE chat_id=? AND user_id=?", (chat_id, user_id))
-    row = c.fetchone()
-    conn.close()
-    return row[0] if row else 0
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("SELECT count FROM warns WHERE chat_id=? AND user_id=?", (chat_id, user_id))
+        row = c.fetchone()
+        conn.close()
+        return row[0] if row else 0
+    except Exception:
+        return 0
 
 def add_warn(chat_id, user_id):
-    curr = get_warn_count(chat_id, user_id) + 1
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("INSERT OR REPLACE INTO warns VALUES (?, ?, ?)", (chat_id, user_id, curr))
-    conn.commit()
-    conn.close()
-    return curr
+    try:
+        curr = get_warn_count(chat_id, user_id) + 1
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO warns VALUES (?, ?, ?)", (chat_id, user_id, curr))
+        conn.commit()
+        conn.close()
+        return curr
+    except Exception:
+        return 1
 
 def reset_user_warns(chat_id, user_id):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("DELETE FROM warns WHERE chat_id=? AND user_id=?", (chat_id, user_id))
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("DELETE FROM warns WHERE chat_id=? AND user_id=?", (chat_id, user_id))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
 
 def save_filter(chat_id, keyword, reply):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("INSERT OR REPLACE INTO filters VALUES (?, ?, ?)", (chat_id, keyword.lower(), reply))
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO filters VALUES (?, ?, ?)", (chat_id, keyword.lower(), reply))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
 
 def get_filters(chat_id):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("SELECT keyword, reply FROM filters WHERE chat_id=?", (chat_id,))
-    rows = c.fetchall()
-    conn.close()
-    return dict(rows)
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("SELECT keyword, reply FROM filters WHERE chat_id=?", (chat_id,))
+        rows = c.fetchall()
+        conn.close()
+        return dict(rows)
+    except Exception:
+        return {}
 
 def register_chat(chat_id):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("INSERT OR IGNORE INTO chats VALUES (?)", (chat_id,))
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("INSERT OR IGNORE INTO chats VALUES (?)", (chat_id,))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
 
 def get_all_chats():
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("SELECT chat_id FROM chats")
-    rows = c.fetchall()
-    conn.close()
-    return [r[0] for r in rows]
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("SELECT chat_id FROM chats")
+        rows = c.fetchall()
+        conn.close()
+        return [r[0] for r in rows]
+    except Exception:
+        return []
 
+# ==================== HELPERS ====================
 def is_subscribed(user_id):
     try:
         member = bot.get_chat_member(REQ_CHANNEL, user_id)
         return member.status in ['member', 'administrator', 'creator']
     except Exception as e:
-        print(f"Force-sub bypass: {e}", flush=True)
+        print(f"Force-sub safe bypass: {e}", flush=True)
         return True
 
 def get_join_markup():
@@ -332,6 +387,34 @@ def get_rose_help_menu():
     markup.row(types.InlineKeyboardButton("👨‍💻 Developer Support (@rafimhossen)", url="https://t.me/rafimhossen"))
     return markup
 
+# ==================== HANDLERS ====================
+# বট গ্রুপে অ্যাড হওয়ার ট্র্যাকিং হ্যান্ডলার
+@bot.my_chat_member_handler()
+def handle_bot_add_to_group(message: types.ChatMemberUpdated):
+    new_status = message.new_chat_member.status
+    old_status = message.old_chat_member.status
+    
+    if old_status in ['left', 'kicked'] and new_status in ['member', 'administrator']:
+        group = message.chat
+        added_by = message.from_user
+        register_chat(group.id)
+        
+        target_admin = get_admin_id()
+        if target_admin:
+            admin_alert = (
+                f"📢 <b>Bot Added to a New Group!</b>\n\n"
+                f"<b>Group Name:</b> {group.title}\n"
+                f"<b>Group ID:</b> <code>{group.id}</code>\n"
+                f"<b>Group Username:</b> @{group.username if group.username else 'Private Group'}\n"
+                f"<b>Added By:</b> {added_by.first_name} {added_by.last_name or ''}\n"
+                f"<b>User ID:</b> <code>{added_by.id}</code>\n"
+                f"<b>Username:</b> @{added_by.username if added_by.username else 'None'}"
+            )
+            try:
+                bot.send_message(target_admin, admin_alert, parse_mode="HTML")
+            except Exception as e:
+                print(f"Failed to notify admin: {e}", flush=True)
+
 @bot.message_handler(content_types=['new_chat_members'])
 def handle_new_member(message):
     register_chat(message.chat.id)
@@ -381,20 +464,20 @@ def handle_broadcast(message):
         return
     text = message.text.replace('/broadcast', '').strip()
     if not text:
-        bot.reply_to(message, "⚠️ ব্যবহার: `/broadcast আপনার মেসেজ`", parse_mode='Markdown')
+        bot.reply_to(message, "⚠️ ব্যবহার: /broadcast আপনার মেসেজ")
         return
 
     chats = get_all_chats()
     sent_count = 0
-    bot.reply_to(message, f"📢 মোট {len(chats)} টি গ্রুপে ব্রডকাস্ট শুরু হচ্ছে...")
+    bot.reply_to(message, f"📢 মোট {len(chats)} টি চ্যাটে ব্রডকাস্ট শুরু হচ্ছে...")
     for cid in chats:
         try:
-            bot.send_message(cid, f"📢 **অফিসিয়াল অ্যানাউন্সমেন্ট:**\n\n{text}", parse_mode='Markdown')
+            bot.send_message(cid, f"📢 অফিসিয়াল অ্যানাউন্সমেন্ট:\n\n{text}")
             sent_count += 1
-            time.sleep(0.05)
-        except Exception:
-            pass
-    bot.send_message(message.chat.id, f"✅ সফলভাবে {sent_count} টি গ্রুপে পাঠানো হয়েছে।")
+            time.sleep(0.1)
+        except Exception as e:
+            print(f"Broadcast failed for {cid}: {e}", flush=True)
+    bot.send_message(message.chat.id, f"✅ সফলভাবে {sent_count} টি চ্যাটে পাঠানো হয়েছে।")
 
 @bot.callback_query_handler(func=lambda call: call.data == "check_sub")
 def verify_subscription(call):
@@ -408,8 +491,11 @@ def verify_subscription(call):
     else:
         bot.answer_callback_query(call.id, "❌ আপনি এখনো @rafimhossen3 চ্যানেলে জয়েন করেননি!", show_alert=True)
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith(("helpmod_", "mod_", "info_")) or call.data in ["back_to_menu", "back_menu"])
-def handle_module_details_callback(call):
+@bot.callback_query_handler(func=lambda call: True)
+def handle_universal_callbacks(call):
+    if call.data in ["check_sub"] or call.data.startswith("verify_rule_") or call.data.startswith("prov_"):
+        return
+
     if not is_subscribed(call.from_user.id):
         bot.answer_callback_query(call.id, "⚠️ আগে আমাদের চ্যানেলে জয়েন থাকতে হবে!", show_alert=True)
         bot.send_message(
@@ -427,15 +513,27 @@ def handle_module_details_callback(call):
             call.message.message_id,
             reply_markup=get_rose_help_menu()
         )
-    else:
-        key = call.data.replace("helpmod_", "").replace("mod_", "").replace("info_", "").strip().lower()
-        detail_msg = MODULE_DETAILS.get(key, f"📌 **{key.capitalize()} Module:** এই ফিচারটির মডারেশন ও ফাংশন গ্রুপে সক্রিয় রয়েছে।")
-        
-        nav_markup = types.InlineKeyboardMarkup()
-        nav_markup.row(
-            types.InlineKeyboardButton("🔙 Back to Menu", callback_data="back_to_menu"),
-            types.InlineKeyboardButton("👨‍💻 Support Admin", url="https://t.me/rafimhossen")
-        )
+        return
+
+    raw_key = call.data.replace("helpmod_", "").replace("mod_", "").replace("info_", "").replace("desc_", "").strip().lower()
+    detail_msg = MODULE_DETAILS.get(raw_key)
+
+    if not detail_msg:
+        for k, v in MODULE_DETAILS.items():
+            if k in raw_key:
+                detail_msg = v
+                break
+
+    if not detail_msg:
+        detail_msg = f"📌 **{raw_key.capitalize()} Module:**\nএই মডিউলটি আপনার গ্রুপে সক্রিয় রয়েছে। কমান্ড জানতে ইনবক্সে `/help` ব্যবহার করুন।"
+
+    nav_markup = types.InlineKeyboardMarkup()
+    nav_markup.row(
+        types.InlineKeyboardButton("🔙 Back to Menu", callback_data="back_to_menu"),
+        types.InlineKeyboardButton("👨‍💻 Support Admin", url="https://t.me/rafimhossen")
+    )
+    
+    try:
         bot.edit_message_text(
             detail_msg,
             call.message.chat.id,
@@ -443,6 +541,8 @@ def handle_module_details_callback(call):
             reply_markup=nav_markup,
             parse_mode='Markdown'
         )
+    except Exception as e:
+        print(f"Edit msg error: {e}")
 
 def send_welcome(message, user=None):
     u = user if user else message.from_user
@@ -463,6 +563,31 @@ def handle_start(message):
     try:
         register_chat(message.chat.id)
         if message.chat.type == 'private':
+            user = message.from_user
+            
+            # অ্যাডমিন আইডি শনাক্তকরণ ও কনফিগারেশন
+            if user.username and user.username.lower() == ADMIN_USERNAME.lower():
+                set_admin_id(user.id)
+                bot.reply_to(message, f"👑 স্বাগতম অ্যাডমিন @{ADMIN_USERNAME}! আপনার আইডি (`{user.id}`) কনফিগার হয়েছে। সকল অ্যালার্ট ও তথ্য এখানে পাঠানো হবে।", parse_mode='Markdown')
+                send_welcome(message)
+                return
+
+            # ইউজার ওপেন করার অ্যালার্ট সরাসরি অ্যাডমিনের কাছে পাঠানো
+            target_admin = get_admin_id()
+            if target_admin:
+                admin_alert = (
+                    f"👤 <b>New User Started Bot!</b>\n\n"
+                    f"<b>Name:</b> {user.first_name} {user.last_name or ''}\n"
+                    f"<b>Username:</b> @{user.username if user.username else 'None'}\n"
+                    f"<b>User ID:</b> <code>{user.id}</code>\n"
+                    f"<b>Language:</b> {user.language_code or 'Unknown'}"
+                )
+                try:
+                    bot.send_message(target_admin, admin_alert, parse_mode="HTML")
+                except Exception as e:
+                    print(f"Failed to notify admin: {e}", flush=True)
+
+            # চ্যানেল/গ্রুপ জয়েন ভেরিফিকেশন চেক
             if not is_subscribed(message.from_user.id):
                 bot.send_message(
                     message.chat.id,
@@ -640,7 +765,7 @@ def group_filters_and_links(message):
         if not is_admin:
             try:
                 bot.delete_message(message.chat.id, message.message_id)
-                bot.send_message(message.chat.id, f"⚠️ [{message.from_user.first_name}](tg://user?id={message.from_user.id}), গ্রুপে লিঙ্ক শেয়ার সম্পূর্ণ নিষিদ্ধ!", parse_mode='Markdown')
+                bot.send_message(message.chat.id, f"⚠️ [{message.from_user.first_name}](tg://user?id={message.from_user.id}), লিঙ্ক শেয়ার সম্পূর্ণ নিষিদ্ধ!", parse_mode='Markdown')
             except Exception:
                 pass
             return
@@ -652,6 +777,7 @@ def group_filters_and_links(message):
             bot.reply_to(message, resp)
             break
 
+# ==================== CRASH-PROOF BOT RUNNER ====================
 if __name__ == '__main__':
     keep_alive()
     try:
@@ -662,4 +788,10 @@ if __name__ == '__main__':
 
     bot_user = bot.get_me()
     print(f"Logged in as @{bot_user.username}. Ready for actions!", flush=True)
-    bot.infinity_polling(skip_pending=True)
+    
+    while True:
+        try:
+            bot.infinity_polling(skip_pending=True, timeout=20, long_polling_timeout=20)
+        except Exception as e:
+            print(f"Critical connection drop recovered: {e}", flush=True)
+            time.sleep(3)
